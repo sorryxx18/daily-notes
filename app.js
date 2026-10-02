@@ -1,7 +1,7 @@
 // 工作筆記：iPAS 小考網頁版。資料流：本頁 ⇄ GAS（notes-sync）⇄ Mac mini ⇄ 備考 bot。
 const POLL_MS = 20000;
-const TOKEN_KEY = "dn_token";
-let token = null;
+const SESSION_KEY = "dn_session";   // {id, exp}
+let session = null;
 let snapshot = null;
 let pendingInbox = [];
 let lastConvLen = -1;
@@ -25,11 +25,20 @@ function fmtTime(iso) {
 }
 
 // ---- 登入 ----
-function tokenValid(t) {
+// Google 登入拿到 ID token 後，送去後端排隊；Mac mini 向 Google 驗證通過才核准這個 session（約 20 秒）。
+// 核准後 14 天內這台電腦不用再登入。
+function loadSession() {
   try {
-    const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    return p.exp * 1000 > Date.now() + 60000;
-  } catch (e) { return false; }
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (s && s.id && s.exp > Date.now()) return s;
+  } catch (e) {}
+  return null;
+}
+
+function newSessionId() {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
 function initGoogle(retries) {
@@ -39,39 +48,58 @@ function initGoogle(retries) {
   }
   google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onCredential, auto_select: true });
   google.accounts.id.renderButton($("#gbtn"), { theme: "outline", size: "medium", text: "signin_with" });
-  if (!token) google.accounts.id.prompt();
+  if (!session) google.accounts.id.prompt();
 }
 
-function onCredential(resp) {
-  token = resp.credential;
-  try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
-  $("#loginErr").textContent = "";
-  showMain();
-  refresh();
+async function onCredential(resp) {
+  const id = newSessionId();
+  $("#loginErr").textContent = "確認身分中，約 20 秒…";
+  try {
+    await post({ action: "login", session: id, id_token: resp.credential });
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const st = await post({ action: "login_status", session: id });
+      if (st.status === "approved") {
+        session = { id, exp: Date.now() + 13.5 * 86400000 };
+        try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+        $("#loginErr").textContent = "";
+        showMain();
+        refresh();
+        return;
+      }
+      if (st.status === "rejected") { $("#loginErr").textContent = "此帳號沒有權限。"; return; }
+    }
+    $("#loginErr").textContent = "確認逾時，請稍後再按一次登入。";
+  } catch (e) {
+    $("#loginErr").textContent = "連線失敗，請稍後再試。";
+  }
 }
 
 function showLogin(msg) {
-  token = null;
-  try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+  session = null;
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
   $("#main").hidden = true; $("#logout").hidden = true; $("#login").hidden = false;
   $("#loginErr").textContent = msg || "";
-  if (window.google && google.accounts && google.accounts.id) google.accounts.id.prompt();
 }
 
 function showMain() { $("#login").hidden = true; $("#main").hidden = false; $("#logout").hidden = false; }
 
 // ---- 後端 ----
+async function post(payload) {
+  const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify(payload) });
+  return res.json();
+}
+
 async function api(payload) {
-  const res = await fetch(GAS_URL, { method: "POST", body: JSON.stringify({ ...payload, id_token: token }) });
-  const data = await res.json();
+  const data = await post({ ...payload, session: session && session.id });
   if (!data.ok && ["login required", "login expired"].includes(data.error)) { showLogin("登入已過期，請重新登入。"); throw new Error(data.error); }
   if (!data.ok && data.error === "forbidden") { showLogin("此帳號沒有權限。"); throw new Error("forbidden"); }
   return data;
 }
 
 async function refresh() {
-  if (!token) return;
-  if (!tokenValid(token)) { showLogin("登入已過期，請重新登入。"); return; }
+  if (!session) return;
+  if (session.exp < Date.now()) { showLogin("登入已過期，請重新登入。"); return; }
   try {
     const data = await api({ action: "state" });
     snapshot = data.snapshot || {};
@@ -193,8 +221,8 @@ $("#logout").addEventListener("click", () => { if (window.google) google.account
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#cover").hidden = !$("#cover").hidden; });
 
 // ---- 啟動 ----
-try { token = localStorage.getItem(TOKEN_KEY); } catch (e) {}
-if (token && tokenValid(token)) { showMain(); refresh(); } else { token = null; $("#login").hidden = false; }
+session = loadSession();
+if (session) { showMain(); refresh(); } else { $("#login").hidden = false; }
 initGoogle(40);
 setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
