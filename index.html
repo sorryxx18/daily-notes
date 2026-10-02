@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>工作筆記</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<div id="cover" hidden></div>
+<main id="app">
+  <header>
+    <h1>工作筆記</h1>
+    <div class="meta"><span id="sync"></span> <button id="logout" class="link" hidden>登出</button></div>
+  </header>
+
+  <section id="login" hidden>
+    <p>請先登入。</p>
+    <div id="gbtn"></div>
+    <p id="loginErr" class="err"></p>
+  </section>
+
+  <section id="main" hidden>
+    <nav>
+      <button data-tab="todo" class="tab on">待辦 <span id="todoCount"></span></button>
+      <button data-tab="done" class="tab">紀錄</button>
+      <button data-tab="talk" class="tab">討論</button>
+    </nav>
+
+    <div id="tab-todo" class="pane"></div>
+    <div id="tab-done" class="pane" hidden></div>
+    <div id="tab-talk" class="pane" hidden>
+      <div id="talk"></div>
+      <div class="compose">
+        <textarea id="msg" rows="3" placeholder="輸入內容，Ctrl+Enter 送出"></textarea>
+        <div class="row">
+          <button id="send">送出</button>
+          <span class="quick">
+            <button class="link" data-q="加碼 1">加一組</button>
+            <button class="link" data-q="今天考點複習">今日整理</button>
+            <button class="link" data-q="本週考點複習">本週整理</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+  <footer>Esc：隱藏 / 顯示</footer>
+</main>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
