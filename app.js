@@ -21,6 +21,7 @@ function plain(s) {
   return String(s ?? "")
     .replace(/✅/g, "【對】").replace(/❌/g, "【錯】").replace(/⚠️?/g, "【注意】")
     .replace(/🔑/g, "重點：").replace(/➕/g, "加碼").replace(/⏰/g, "")
+    .replace(/([0-9])\uFE0F?\u20E3/g, "$1.")   // 1️⃣ 這種數字方塊改成「1.」
     .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, "");
 }
 
