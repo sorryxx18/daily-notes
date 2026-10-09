@@ -43,3 +43,6 @@ summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 textarea { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
 .row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 footer { color: var(--muted); font-size: 11px; margin-top: 24px; text-align: right; }
+
+details.review { margin-top: 10px; padding-top: 8px; border-top: 1px solid #ddd; }
+details.review > summary { font-weight: 600; }

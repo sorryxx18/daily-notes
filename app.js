@@ -6,6 +6,12 @@ let snapshot = null;
 let pendingInbox = [];
 let lastConvLen = -1;
 const drafts = {};   // set_no -> {qIndex: letter}，輪詢重畫時保留尚未送出的選擇
+// 說明、講解的展開狀態：使用者點開或收起過的照他的，重畫（每 20 秒輪詢）時不會被還原成預設
+const OPEN_KEY = "dn_open";
+let openState = {};
+try { openState = JSON.parse(localStorage.getItem(OPEN_KEY) || "{}") || {}; } catch (e) {}
+const isOpen = (key, dflt) => (key in openState ? openState[key] : dflt);
+let lastDrawn = "";   // 上次畫的內容；資料沒變就不重畫，捲動位置和選取的文字才不會被打斷
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -104,6 +110,9 @@ async function refresh() {
     const data = await api({ action: "state" });
     snapshot = data.snapshot || {};
     pendingInbox = data.inbox || [];
+    const sig = JSON.stringify([{ ...snapshot, synced_at: null }, pendingInbox]);
+    if (sig === lastDrawn) { $("#sync").textContent = snapshot.synced_at ? `更新 ${fmtTime(snapshot.synced_at)}` : ""; return; }
+    lastDrawn = sig;
     render();
   } catch (e) {
     $("#sync").textContent = "連線失敗，稍後重試";
@@ -158,6 +167,7 @@ async function submitSet(setNo) {
   try {
     await api({ action: "send", kind: "answer", payload: { set_no: setNo, letters } });
     pendingInbox.push({ kind: "answer", payload: { set_no: setNo } });
+    lastDrawn = "";
     render();
   } catch (e) {
     const el = $(`#err${setNo}`); if (el) el.textContent = "送出失敗，請再試一次";
@@ -166,17 +176,25 @@ async function submitSet(setNo) {
 
 function renderDone(s) {
   const sets = s.graded || [];
-  $("#tab-done").innerHTML = sets.length ? sets.map((set) => {
+  $("#tab-done").innerHTML = sets.length ? sets.map((set, n) => {
     const score = set.questions.filter((q) => q.given === q.answer).length;
     const qs = set.questions.map((q, i) => {
       const ok = q.given === q.answer;
       return `<div class="q"><div class="src">${i + 1}．${esc(q.point)}</div><p>${esc(q.question)}</p>
         ${Object.entries(q.options).map(([k, v]) => `<div class="opt">${k}. ${esc(v)}</div>`).join("")}
         <div class="res ${ok ? "ok" : "bad"}">${ok ? "正確" : "錯誤"}：選 ${esc(q.given || "-")}，答案 ${esc(q.answer)}</div>
-        <details ${ok ? "" : "open"}><summary>說明</summary><div class="explain">${esc(plain(q.explain))}</div></details></div>`;
+        <details data-k="${set.set_no}-${i}" ${isOpen(`${set.set_no}-${i}`, !ok) ? "open" : ""}><summary>說明</summary><div class="explain">${esc(plain(q.explain))}</div></details></div>`;
     }).join("");
-    return `<div class="set"><h2>第 ${set.set_no} 組　${score}/${set.questions.length} <span class="note">${fmtTime(set.answered_at)}</span></h2>${qs}</div>`;
+    // 助教當下的完整批改（和手機上看到的同一則）；最新一組預設展開，其餘預設收起
+    const review = set.review ? `<details class="review" data-k="${set.set_no}-r" ${isOpen(`${set.set_no}-r`, n === 0) ? "open" : ""}><summary>助教完整講解</summary><div class="explain">${esc(plain(set.review))}</div></details>` : "";
+    return `<div class="set"><h2>第 ${set.set_no} 組　${score}/${set.questions.length} <span class="note">${fmtTime(set.answered_at)}</span></h2>${qs}${review}</div>`;
   }).join("") : `<p class="note">還沒有紀錄。</p>`;
+  $("#tab-done").querySelectorAll("details[data-k]").forEach((d) => d.addEventListener("toggle", () => {
+    openState[d.dataset.k] = d.open;
+    const keys = Object.keys(openState);
+    if (keys.length > 400) keys.slice(0, keys.length - 400).forEach((k) => delete openState[k]);   // 只留最近的，免得越存越多
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify(openState)); } catch (e) {}
+  }));
 }
 
 function renderTalk(s) {
