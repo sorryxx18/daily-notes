@@ -14,6 +14,14 @@ const isOpen = (key, dflt) => (key in openState ? openState[key] : dflt);
 let lastDrawn = "";   // 上次畫的內容；資料沒變就不重畫，捲動位置和選取的文字才不會被打斷
 
 const $ = (s) => document.querySelector(s);
+// 裝成 App 時，頁面是從 App 內部（localhost）載入的。App 裡不能直接做 Google 登入，
+// 所以改成：App 產生一組代號 → 開瀏覽器到 ?pair=代號 完成登入 → App 這邊等核准。
+const IN_APP = location.hostname === "localhost";
+const PAGE_URL = "https://sorryxx18.github.io/daily-notes/";
+let pairId = new URLSearchParams(location.search).get("pair");
+if (!/^[0-9a-f]{64}$/.test(pairId || "")) pairId = null;
+if (pairId) history.replaceState(null, "", location.pathname);   // 代號不留在網址列
+const pairCode = (id) => id.slice(0, 4).toUpperCase();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 低調：把 bot 回覆裡的表情符號換成文字或拿掉
@@ -53,9 +61,31 @@ function initGoogle(retries) {
     if (retries > 0) setTimeout(() => initGoogle(retries - 1), 150);
     return;
   }
-  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onCredential, auto_select: true });
+  // 幫 App 登入時不自動帶入帳號，一定要自己按，免得點到別人給的連結就放行
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: pairId ? onPairCredential : onCredential, auto_select: !pairId });
   google.accounts.id.renderButton($("#gbtn"), { theme: "outline", size: "medium", text: "signin_with" });
-  if (!session) google.accounts.id.prompt();
+  if (!session && !pairId) google.accounts.id.prompt();
+}
+
+// 等 Mac mini 核准這個代號；回傳 approved／rejected／timeout
+async function waitApproved(id, ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const st = await post({ action: "login_status", session: id });
+      if (st.status === "approved" || st.status === "rejected") return st.status;
+    } catch (e) {}   // 斷線就下一輪再問
+  }
+  return "timeout";
+}
+
+function useSession(id) {
+  session = { id, exp: Date.now() + 13.5 * 86400000 };
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+  $("#loginErr").textContent = "";
+  showMain();
+  refresh();
 }
 
 async function onCredential(resp) {
@@ -63,23 +93,49 @@ async function onCredential(resp) {
   $("#loginErr").textContent = "確認身分中，約 20 秒…";
   try {
     await post({ action: "login", session: id, id_token: resp.credential });
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
-      const st = await post({ action: "login_status", session: id });
-      if (st.status === "approved") {
-        session = { id, exp: Date.now() + 13.5 * 86400000 };
-        try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
-        $("#loginErr").textContent = "";
-        showMain();
-        refresh();
-        return;
-      }
-      if (st.status === "rejected") { $("#loginErr").textContent = "此帳號沒有權限。"; return; }
-    }
-    $("#loginErr").textContent = "確認逾時，請稍後再按一次登入。";
+    const st = await waitApproved(id, 90000);
+    if (st === "approved") useSession(id);
+    else $("#loginErr").textContent = st === "rejected" ? "此帳號沒有權限。" : "確認逾時，請稍後再按一次登入。";
   } catch (e) {
     $("#loginErr").textContent = "連線失敗，請稍後再試。";
   }
+}
+
+// 瀏覽器這一頭：替 App 的代號登入，這個瀏覽器自己不留登入狀態
+async function onPairCredential(resp) {
+  $("#loginErr").textContent = "確認身分中，約 20 秒…";
+  try {
+    await post({ action: "login", session: pairId, id_token: resp.credential });
+    const st = await waitApproved(pairId, 90000);
+    $("#loginErr").textContent = st === "approved" ? "" : st === "rejected" ? "此帳號沒有權限。" : "確認逾時，請回 App 再按一次登入。";
+    if (st === "approved") { $("#gbtn").hidden = true; $("#pairNote").textContent = "已完成，可以回到 App 了。"; }
+  } catch (e) {
+    $("#loginErr").textContent = "連線失敗，請稍後再試。";
+  }
+}
+
+// App 這一頭：準備好代號和連結，按下去之後開始等核准
+let appPair = null, appWaiting = false;
+function prepLogin() {
+  $("#gbtn").hidden = IN_APP;
+  $("#appLogin").hidden = !IN_APP;
+  if (!IN_APP) return;
+  appPair = newSessionId();
+  $("#appGo").href = `${PAGE_URL}?pair=${appPair}`;
+  $("#appCode").textContent = "";
+}
+
+async function appLoginClicked() {
+  if (appWaiting) return;
+  appWaiting = true;
+  const id = appPair;
+  $("#appCode").textContent = `代碼 ${pairCode(id)}`;
+  $("#loginErr").textContent = "請在跳出的瀏覽器完成登入，再回到這裡。";
+  const st = await waitApproved(id, 600000);
+  appWaiting = false;
+  if (st === "approved") { useSession(id); return; }
+  $("#loginErr").textContent = st === "rejected" ? "此帳號沒有權限。" : "等太久了，請再按一次登入。";
+  prepLogin();
 }
 
 function showLogin(msg) {
@@ -87,6 +143,7 @@ function showLogin(msg) {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
   $("#main").hidden = true; $("#logout").hidden = true; $("#login").hidden = false;
   $("#loginErr").textContent = msg || "";
+  prepLogin();
 }
 
 function showMain() { $("#login").hidden = true; $("#main").hidden = false; $("#logout").hidden = false; }
@@ -317,8 +374,16 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- 啟動 ----
-session = loadSession();
-if (session) { showMain(); refresh(); } else { $("#login").hidden = false; }
-initGoogle(40);
+$("#appGo").addEventListener("click", appLoginClicked);
+if (pairId) {
+  $("#login").hidden = false;
+  $("#login").querySelector("p").hidden = true;
+  $("#pairNote").hidden = false;
+  $("#pairNote").textContent = `要讓 App 登入嗎？代碼 ${pairCode(pairId)}，和 App 上顯示的一樣，再按下面的按鈕。不是你自己剛在 App 按登入的話，請直接關掉這一頁。`;
+} else {
+  session = loadSession();
+  if (session) { showMain(); refresh(); } else { $("#login").hidden = false; prepLogin(); }
+}
+if (!IN_APP) initGoogle(40);
 setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
