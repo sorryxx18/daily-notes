@@ -43,6 +43,12 @@ summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 textarea { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
 .row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 footer { color: var(--muted); font-size: 11px; margin-top: 24px; text-align: right; }
+.q.cur { border-left: 3px solid var(--accent); padding-left: 10px; margin-left: -13px; }
+.set.ready button.submit { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.lbar { margin: 0 0 12px; }
+details.lesson { margin-top: 0; }
+details.lesson > summary { font-size: 15px; color: var(--fg); font-weight: 600; }
+.ltext { white-space: pre-wrap; margin-top: 8px; }
 
 details.review { margin-top: 10px; padding-top: 8px; border-top: 1px solid #ddd; }
 details.review > summary { font-weight: 600; }

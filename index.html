@@ -27,6 +27,7 @@
       <button data-tab="todo" class="tab on">待辦 <span id="todoCount"></span></button>
       <button data-tab="done" class="tab">紀錄</button>
       <button data-tab="talk" class="tab">討論</button>
+      <button data-tab="more" class="tab">補強</button>
     </nav>
 
     <div id="tab-todo" class="pane"></div>
@@ -45,8 +46,15 @@
         </div>
       </div>
     </div>
+    <div id="tab-more" class="pane" hidden>
+      <div class="row lbar">
+        <span><button id="lessonNext">下一段</button> <button id="lessonProg" class="link">進度</button></span>
+        <span id="lessonNote" class="note"></span>
+      </div>
+      <div id="lessons"></div>
+    </div>
   </section>
-  <footer>Esc：隱藏 / 顯示</footer>
+  <footer>Esc：隱藏 / 顯示　1–4：切換　A–D、X：選　Enter：送出　N：下一段　/：輸入</footer>
 </main>
 <script src="config.js"></script>
 <script src="app.js"></script>

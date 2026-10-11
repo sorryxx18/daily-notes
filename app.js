@@ -127,7 +127,7 @@ function render() {
   const n = (s.open_sets || []).length;
   $("#todoCount").textContent = n ? `(${n})` : "";
   document.title = n ? `(${n}) 工作筆記` : "工作筆記";
-  renderTodo(s); renderDone(s); renderTalk(s);
+  renderTodo(s); renderDone(s); renderTalk(s); renderMore(s);
 }
 
 function pendingSets() {
@@ -139,16 +139,18 @@ function renderTodo(s) {
   const sets = s.open_sets || [];
   if (!sets.length) { box.innerHTML = `<p class="note">目前沒有待辦。</p>`; return; }
   const waiting = pendingSets();
+  const cur = currentQ();
   box.innerHTML = sets.map((set) => {
     const busy = waiting.has(set.set_no);
+    const here = cur && cur.set.set_no === set.set_no;
     const qs = set.questions.map((q, i) => {
       const chosen = (drafts[set.set_no] || {})[i];
       const opts = Object.entries(q.options).map(([k, v]) =>
         `<label class="opt"><input type="radio" name="s${set.set_no}q${i}" value="${k}" ${chosen === k ? "checked" : ""} ${busy ? "disabled" : ""}>${k}. ${esc(v)}</label>`).join("");
       const unsure = `<label class="opt"><input type="radio" name="s${set.set_no}q${i}" value="?" ${chosen === "?" ? "checked" : ""} ${busy ? "disabled" : ""}>不確定</label>`;
-      return `<div class="q"><div class="src">${i + 1}．${esc(q.point)}${q.mode === "review" ? "（複習）" : ""}</div><p>${esc(q.question)}</p>${opts}${unsure}</div>`;
+      return `<div class="q${here && cur.i === i ? " cur" : ""}"><div class="src">${i + 1}．${esc(q.point)}${q.mode === "review" ? "（複習）" : ""}</div><p>${esc(q.question)}</p>${opts}${unsure}</div>`;
     }).join("");
-    return `<div class="set" data-set="${set.set_no}">
+    return `<div class="set${here && cur.i < 0 ? " ready" : ""}" data-set="${set.set_no}">
       <h2>第 ${set.set_no} 組${set.extra ? "（加碼）" : ""} <span class="note">${fmtTime(set.asked_at)}</span></h2>
       ${qs}
       ${busy ? `<p class="note">已送出，批改中…（約 1 分鐘）</p>` : `<button class="submit" data-set="${set.set_no}">送出答案</button> <span class="err" id="err${set.set_no}"></span>`}
@@ -159,6 +161,32 @@ function renderTodo(s) {
     (drafts[sn] = drafts[sn] || {})[qi] = el.value;
   }));
   box.querySelectorAll("button.submit").forEach((b) => b.addEventListener("click", () => submitSet(Number(b.dataset.set))));
+}
+
+// 鍵盤作答的「目前這題」：最前面一組還沒送出的，裡面第一題還沒選的；整組都選了就是 i = -1（可以按 Enter 送出）
+function currentQ() {
+  const waiting = pendingSets();
+  const set = ((snapshot || {}).open_sets || []).find((x) => !waiting.has(x.set_no));
+  if (!set) return null;
+  const d = drafts[set.set_no] || {};
+  return { set, i: set.questions.findIndex((q, i) => !d[i]) };
+}
+
+function keyTodo(k) {
+  const cur = currentQ();
+  if (!cur) return false;
+  if (k === "Enter") {
+    if (cur.i >= 0) return false;
+    submitSet(cur.set.set_no);
+    return true;
+  }
+  const v = k === "X" ? "?" : k;
+  if (cur.i < 0 || !(v === "?" || v in cur.set.questions[cur.i].options)) return false;
+  (drafts[cur.set.set_no] = drafts[cur.set.set_no] || {})[cur.i] = v;
+  renderTodo(snapshot);
+  const el = $("#tab-todo .q.cur") || $("#tab-todo .set.ready button.submit");
+  if (el) el.scrollIntoView({ block: "nearest" });
+  return true;
 }
 
 async function submitSet(setNo) {
@@ -190,12 +218,43 @@ function renderDone(s) {
     const review = set.review ? `<details class="review" data-k="${set.set_no}-r" ${isOpen(`${set.set_no}-r`, n === 0) ? "open" : ""}><summary>助教完整講解</summary><div class="explain">${esc(plain(set.review))}</div></details>` : "";
     return `<div class="set"><h2>第 ${set.set_no} 組　${score}/${set.questions.length} <span class="note">${fmtTime(set.answered_at)}</span></h2>${qs}${review}</div>`;
   }).join("") : `<p class="note">還沒有紀錄。</p>`;
-  $("#tab-done").querySelectorAll("details[data-k]").forEach((d) => d.addEventListener("toggle", () => {
+  rememberOpen($("#tab-done"));
+}
+
+function rememberOpen(box) {
+  box.querySelectorAll("details[data-k]").forEach((d) => d.addEventListener("toggle", () => {
     openState[d.dataset.k] = d.open;
     const keys = Object.keys(openState);
     if (keys.length > 400) keys.slice(0, keys.length - 400).forEach((k) => delete openState[k]);   // 只留最近的，免得越存越多
     try { localStorage.setItem(OPEN_KEY, JSON.stringify(openState)); } catch (e) {}
   }));
+}
+
+// 補強：把助教講過的段落從對話裡挑出來（開頭是「補課：」的回覆），新的在上面；只看得到同步帶過來的最近對話
+const LESSON_RE = /^補課[：:]\s*/;
+function renderMore(s) {
+  const list = (s.conversation || []).filter((m) => m.src === "bot" && LESSON_RE.test(plain(m.text).trim())).reverse();
+  const asked = pendingInbox.some((i) => i.kind === "message" && ["下", "補課進度"].includes(i.payload.text));
+  $("#lessonNext").disabled = asked;
+  $("#lessonNote").textContent = asked ? "已送出，約 1 分鐘後出現" : "";
+  $("#lessons").innerHTML = list.length ? list.map((m, n) => {
+    const text = plain(m.text).trim().replace(LESSON_RE, ""), cut = text.indexOf("\n");
+    const title = cut < 0 ? text : text.slice(0, cut), body = cut < 0 ? "" : text.slice(cut).trim();
+    return `<details class="set lesson" data-k="L-${esc(m.ts)}" ${isOpen(`L-${m.ts}`, n === 0) ? "open" : ""}><summary>${esc(title)} <span class="note">${fmtTime(m.ts)}</span></summary><div class="ltext">${esc(body)}</div></details>`;
+  }).join("") : `<p class="note">最近沒有內容，按「下一段」開始。</p>`;
+  rememberOpen($("#lessons"));
+}
+
+async function sendQuick(text) {
+  if (pendingInbox.some((i) => i.kind === "message" && i.payload.text === text)) return;
+  try {
+    await api({ action: "send", kind: "message", payload: { text } });
+    pendingInbox.push({ kind: "message", payload: { text } });
+    lastDrawn = "";
+    render();
+  } catch (e) {
+    $("#lessonNote").textContent = "送出失敗，請再試一次";
+  }
 }
 
 function renderTalk(s) {
@@ -228,16 +287,34 @@ async function sendMsg(text) {
 }
 
 // ---- 事件 ----
-document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
-  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
-  document.querySelectorAll(".pane").forEach((p) => { p.hidden = p.id !== `tab-${t.dataset.tab}`; });
-  if (t.dataset.tab === "talk") $("#talk").scrollTop = $("#talk").scrollHeight;
-}));
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x.dataset.tab === name));
+  document.querySelectorAll(".pane").forEach((p) => { p.hidden = p.id !== `tab-${name}`; });
+  if (name === "talk") $("#talk").scrollTop = $("#talk").scrollHeight;
+}
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
+$("#lessonNext").addEventListener("click", () => sendQuick("下"));
+$("#lessonProg").addEventListener("click", () => sendQuick("補課進度"));
 $("#send").addEventListener("click", () => sendMsg($("#msg").value));
 $("#msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMsg($("#msg").value); });
 document.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => sendMsg(b.dataset.q)));
 $("#logout").addEventListener("click", () => { if (window.google) google.accounts.id.disableAutoSelect(); showLogin(""); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#cover").hidden = !$("#cover").hidden; });
+// 鍵盤：打字中、畫面蓋住、還沒登入時都不作用；用實體鍵位判斷，開著中文輸入法也按得到
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { $("#cover").hidden = !$("#cover").hidden; return; }
+  if (!$("#cover").hidden || $("#main").hidden || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  const t = e.target;
+  if (t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || (t.tagName === "INPUT" && t.type !== "radio")) return;
+  const tab = document.querySelector(".tab.on").dataset.tab;
+  const digit = /^(Digit|Numpad)([1-4])$/.exec(e.code), letter = /^Key([A-DXN])$/.exec(e.code);
+  let used = false;
+  if (digit) { showTab(["todo", "done", "talk", "more"][digit[2] - 1]); used = true; }
+  else if (e.code === "Slash") { showTab("talk"); $("#msg").focus(); used = true; }
+  else if (tab === "more" && letter && letter[1] === "N") { sendQuick("下"); used = true; }
+  else if (tab === "todo" && letter && letter[1] !== "N") used = keyTodo(letter[1]);
+  else if (tab === "todo" && (e.code === "Enter" || e.code === "NumpadEnter") && t.tagName !== "BUTTON") used = keyTodo("Enter");
+  if (used) e.preventDefault();
+});
 
 // ---- 啟動 ----
 session = loadSession();
