@@ -312,18 +312,41 @@ function lessons(conv) {
     if (asked) asked--;
     if (at < 0) at = 0;
     lines.splice(at, 1);
-    out.push({ ts: m.ts, title: head.replace(/^補課[：:｜|]\s*/, "") || "（無標題）", body: lines.join("\n").trim() });
+    const title = head.replace(/^補課[：:｜|]\s*/, "") || "（無標題）";
+    out.push({ ts: m.ts, title, body: lines.join("\n").trim(), ...lessonTopic(title) });
   });
-  return out.reverse();
+  return out;
+}
+
+// 主題：新寫法「主題｜第 N/M 則」直接拆；舊寫法取標題裡括號、冒號、「第 N 則」之前的那段
+function lessonTopic(title) {
+  const m = /^(.+?)[｜|]\s*第\s*(\d+)\s*\/\s*(\d+)\s*則/.exec(title);
+  if (m) return { topic: m[1].trim(), label: `第 ${m[2]}/${m[3]} 則` };
+  return { topic: title.split(/（|第\s*\d+\s*則|：/)[0].trim() || title, label: title };
+}
+
+// 連著講的同一主題收成一組（舊寫法的主題長短不一，一個是另一個的開頭就算同一個）
+function lessonGroups(list) {
+  const same = (a, b) => a.length >= 2 && b.length >= 2 && (a.startsWith(b) || b.startsWith(a));
+  const groups = [];
+  list.forEach((l) => {
+    const g = groups[groups.length - 1];
+    if (g && same(g.topic, l.topic)) { g.items.push(l); if (l.topic.length > g.topic.length) g.topic = l.topic; }
+    else groups.push({ topic: l.topic, items: [l] });
+  });
+  return groups.reverse();
 }
 
 function renderMore(s) {
   const list = lessons(s.conversation || []);
+  const newest = list.length ? list[list.length - 1].ts : "";
+  const one = (m, text) => `<details class="${text ? "part" : "set lesson"}" data-k="L-${esc(m.ts)}" ${isOpen(`L-${m.ts}`, m.ts === newest) ? "open" : ""}><summary>${esc(text || m.title)} <span class="note">${fmtTime(m.ts)}</span></summary><div class="ltext">${esc(m.body)}</div></details>`;
   const asked = pendingInbox.some((i) => i.kind === "message" && ["下", "補課進度"].includes(i.payload.text));
   $("#lessonNext").disabled = asked;
   $("#lessonNote").textContent = asked ? "已送出，約 1 分鐘後出現" : "";
-  $("#lessons").innerHTML = list.length ? list.map((m, n) =>
-    `<details class="set lesson" data-k="L-${esc(m.ts)}" ${isOpen(`L-${m.ts}`, n === 0) ? "open" : ""}><summary>${esc(m.title)} <span class="note">${fmtTime(m.ts)}</span></summary><div class="ltext">${esc(m.body)}</div></details>`
+  // 一組裡面照講的順序由上往下排，組和組之間新的在上
+  $("#lessons").innerHTML = list.length ? lessonGroups(list).map((g) => g.items.length === 1 ? one(g.items[0]) :
+    `<div class="set lgroup"><h2>${esc(g.topic)} <span class="note">共 ${g.items.length} 則</span></h2>${g.items.map((m) => one(m, m.label)).join("")}</div>`
   ).join("") : `<p class="note">最近沒有內容，按「下一段」開始。</p>`;
   rememberOpen($("#lessons"));
 }

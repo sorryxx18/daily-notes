@@ -50,6 +50,8 @@ footer { color: var(--muted); font-size: 11px; margin-top: 24px; text-align: rig
 details.lesson { margin-top: 0; }
 details.lesson > summary { font-size: 15px; color: var(--fg); font-weight: 600; }
 .ltext { white-space: pre-wrap; margin-top: 8px; }
+details.part { margin-top: 0; padding: 6px 0; border-top: 1px solid var(--line); }
+details.part > summary { font-size: 14px; }
 
 details.review { margin-top: 10px; padding-top: 8px; border-top: 1px solid #ddd; }
 details.review > summary { font-weight: 600; }
