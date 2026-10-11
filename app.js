@@ -287,18 +287,44 @@ function rememberOpen(box) {
   }));
 }
 
-// 補強：把助教講過的段落從對話裡挑出來（開頭是「補課：」的回覆），新的在上面；只看得到同步帶過來的最近對話
-const LESSON_RE = /^補課[：:]\s*/;
+// 補強：把助教講過的段落從對話裡挑出來，新的在上面；只看得到同步帶過來的最近對話。
+// 助教每次的開頭寫法不固定，所以主要看前後文：回「下」的那一則就是；開頭有「補課：」或「第 N 則」的也算。問進度的回覆不算。
+const NEXT_RE = /^(下|下一段|補課)(\s|$)/;   // 「下」後面接著講別的也算
+const lessonHead = (text) => text.split("\n")[0].replace(/^（網頁）\s*/, "").replace(/^回「[^」]*」\s*(→|->)\s*/, "").replace(/^開始補課[：:]\s*/, "").trim();
+function lessons(conv) {
+  const out = [];
+  let asked = 0;   // 還沒被回到的「下」
+  conv.forEach((m) => {
+    const text = plain(m.text).trim();
+    if (m.src !== "bot") {
+      const t = text.replace(/^第\s*\d+\s*組作答.*/, "");
+      if (NEXT_RE.test(text)) asked++;
+      else if (t && text !== "補課進度") asked = 0;   // 中間聊了別的，前面那個「下」就不算了
+      return;
+    }
+    if (/補課進度|補課清單/.test(text.slice(0, 40))) return;
+    // 標題行：通常是第一行；助教先回了一兩句話才開始講的，就用後面那行「補課：…」
+    const lines = text.split("\n");
+    let at = lines.findIndex((l) => /^補課[：:｜|]/.test(l.trim()));
+    let head = at >= 0 ? lines[at].trim() : lessonHead(text);
+    const marked = at >= 0 || /^補課[：:｜|]/.test(head) || /第\s*\d+\s*則/.test(head);
+    if (!marked && !asked) return;
+    if (asked) asked--;
+    if (at < 0) at = 0;
+    lines.splice(at, 1);
+    out.push({ ts: m.ts, title: head.replace(/^補課[：:｜|]\s*/, "") || "（無標題）", body: lines.join("\n").trim() });
+  });
+  return out.reverse();
+}
+
 function renderMore(s) {
-  const list = (s.conversation || []).filter((m) => m.src === "bot" && LESSON_RE.test(plain(m.text).trim())).reverse();
+  const list = lessons(s.conversation || []);
   const asked = pendingInbox.some((i) => i.kind === "message" && ["下", "補課進度"].includes(i.payload.text));
   $("#lessonNext").disabled = asked;
   $("#lessonNote").textContent = asked ? "已送出，約 1 分鐘後出現" : "";
-  $("#lessons").innerHTML = list.length ? list.map((m, n) => {
-    const text = plain(m.text).trim().replace(LESSON_RE, ""), cut = text.indexOf("\n");
-    const title = cut < 0 ? text : text.slice(0, cut), body = cut < 0 ? "" : text.slice(cut).trim();
-    return `<details class="set lesson" data-k="L-${esc(m.ts)}" ${isOpen(`L-${m.ts}`, n === 0) ? "open" : ""}><summary>${esc(title)} <span class="note">${fmtTime(m.ts)}</span></summary><div class="ltext">${esc(body)}</div></details>`;
-  }).join("") : `<p class="note">最近沒有內容，按「下一段」開始。</p>`;
+  $("#lessons").innerHTML = list.length ? list.map((m, n) =>
+    `<details class="set lesson" data-k="L-${esc(m.ts)}" ${isOpen(`L-${m.ts}`, n === 0) ? "open" : ""}><summary>${esc(m.title)} <span class="note">${fmtTime(m.ts)}</span></summary><div class="ltext">${esc(m.body)}</div></details>`
+  ).join("") : `<p class="note">最近沒有內容，按「下一段」開始。</p>`;
   rememberOpen($("#lessons"));
 }
 
